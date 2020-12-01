@@ -1,7 +1,6 @@
 package org.apache.spark.ml.made
 
 import breeze.linalg._
-import org.apache.spark.api.java.JavaRDD.fromRDD
 import org.apache.spark.ml.PredictorParams
 import org.apache.spark.ml.linalg.{BLAS, Vector, Vectors}
 import org.apache.spark.ml.param.{DoubleParam, IntParam, ParamMap}
@@ -10,8 +9,6 @@ import org.apache.spark.ml.util.{DefaultParamsReadable, DefaultParamsReader, Def
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.{Dataset, Encoder, Row}
 import org.apache.spark.sql.types.{DoubleType, StructField, StructType}
-
-import scala.collection.convert.ImplicitConversions.{`collection AsScalaIterable`, `iterable AsScalaIterable`}
 
 
 trait MyLinearRegressionParams extends PredictorParams {

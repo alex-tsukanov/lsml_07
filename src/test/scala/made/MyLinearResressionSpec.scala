@@ -6,7 +6,6 @@ import made.WithSpark
 import org.apache.spark.ml.feature.{LabeledPoint, VectorAssembler}
 import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.ml.{Pipeline, PipelineModel}
-import org.scalatest._
 import org.scalatest.flatspec._
 import org.scalatest.matchers._
 
