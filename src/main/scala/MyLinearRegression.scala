@@ -1,52 +1,20 @@
 package org.apache.spark.ml.made
 
 import breeze.linalg._
-import org.apache.spark.ml.{Pipeline, PredictorParams}
-import org.apache.spark.ml.feature.VectorAssembler
+import org.apache.spark.api.java.JavaRDD.fromRDD
+import org.apache.spark.ml.PredictorParams
 import org.apache.spark.ml.linalg.{BLAS, Vector, Vectors}
 import org.apache.spark.ml.param.{DoubleParam, IntParam, ParamMap}
 import org.apache.spark.ml.regression.{RegressionModel, Regressor}
-import org.apache.spark.ml.util.Identifiable
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.ml.util.{DefaultParamsReadable, DefaultParamsReader, DefaultParamsWritable, DefaultParamsWriter, Identifiable, MLReadable, MLReader, MLWritable, MLWriter}
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.{Dataset, Encoder, Row}
+import org.apache.spark.sql.types.{DoubleType, StructField, StructType}
+
+import scala.collection.convert.ImplicitConversions.{`collection AsScalaIterable`, `iterable AsScalaIterable`}
 
 
-object DeveloperApiExample {
-
-  def main(args: Array[String]): Unit = {
-    val spark = SparkSession
-      .builder
-      .appName("DeveloperApiExample")
-      .config("spark.master", "local")
-      .getOrCreate()
-    import spark.implicits._
-
-    val X = DenseMatrix.rand(100000, 3)
-    val y = X * DenseVector(0.5, -0.1, 0.2)
-    val data = DenseMatrix.horzcat(X, y.asDenseMatrix.t)
-    val df = data(*, ::).iterator
-      .map(x => (x(0), x(1), x(2), x(3)))
-      .toSeq
-      .toDF("x1", "x2", "x3", "y")
-
-    val pipeline = new Pipeline()
-      .setStages(
-        Array(
-          new VectorAssembler()
-            .setInputCols(Array("x1", "x2", "x3"))
-            .setOutputCol("features"),
-          new MyLinearRegression()
-            .setLabelCol("y")
-        )
-      )
-    val model = pipeline.fit(df)
-    println(model.stages.last.asInstanceOf[MyLinearRegressionModel].coefficients)
-
-    spark.stop()
-  }
-}
-
-
-private trait MyLinearRegressionParams extends PredictorParams {
+trait MyLinearRegressionParams extends PredictorParams {
 
   val maxIter: IntParam = new IntParam(this, "maxIter", "max number of iterations")
   def getMaxIter: Int = $(maxIter)
@@ -58,11 +26,12 @@ private trait MyLinearRegressionParams extends PredictorParams {
 
 }
 
-private class MyLinearRegression(override val uid: String)
+class MyLinearRegression(override val uid: String)
   extends Regressor[Vector, MyLinearRegression, MyLinearRegressionModel]
-    with MyLinearRegressionParams {
+    with MyLinearRegressionParams
+    with DefaultParamsWritable {
 
-  def this() = this(Identifiable.randomUID("myLogReg"))
+  def this() = this(Identifiable.randomUID("my Linear Regression"))
 
   setMaxIter(1000)
   setLearningRate(0.1)
@@ -104,13 +73,17 @@ private class MyLinearRegression(override val uid: String)
   override def copy(extra: ParamMap): MyLinearRegression = defaultCopy(extra)
 }
 
+object MyLinearRegression extends DefaultParamsReadable[MyLinearRegression]
 
-private class MyLinearRegressionModel(
+
+class MyLinearRegressionModel(
                                        override val uid: String,
                                        val coefficients: Vector)
   extends RegressionModel[Vector, MyLinearRegressionModel]
-    with MyLinearRegressionParams {
+    with MyLinearRegressionParams
+    with MLWritable {
 
+  private[made] def this(coefficients: Vector) = this(Identifiable.randomUID("linearRegression"), coefficients)
 
   override val numFeatures: Int = coefficients.size
 
@@ -120,5 +93,31 @@ private class MyLinearRegressionModel(
 
   override def predict(features: Vector): Double = {
     BLAS.dot(features, coefficients)
+  }
+
+  override def write: MLWriter = new DefaultParamsWriter(this) {
+    override protected def saveImpl(path: String): Unit = {
+      super.saveImpl(path)
+
+      val rdd = sparkSession.sparkContext.parallelize(coefficients.toArray).map(a => Row(a))
+      val schema = StructType(Array(StructField("coefficient", DoubleType, nullable = false)))
+      sparkSession.createDataFrame(rdd, schema).write.parquet(path + "/vectors")
+    }
+  }
+}
+
+object MyLinearRegressionModel extends MLReadable[MyLinearRegressionModel] {
+  override def read: MLReader[MyLinearRegressionModel] = new MLReader[MyLinearRegressionModel] {
+    override def load(path: String): MyLinearRegressionModel = {
+      val metadata = DefaultParamsReader.loadMetadata(path, sc)
+
+      val vectors = sqlContext.read.parquet(path + "/vectors")
+
+      implicit val encoder : Encoder[Vector] = ExpressionEncoder()
+
+      val coefficients = vectors.select("coefficient").rdd.map(r => r(0).asInstanceOf[Double]).collect()
+
+      new MyLinearRegressionModel(Vectors.dense(coefficients))
+    }
   }
 }
